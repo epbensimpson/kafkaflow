@@ -18,6 +18,7 @@ internal class KafkaBus : IKafkaBus
 
     private readonly List<IConsumerManager> _consumerManagers = new();
 
+    private readonly SemaphoreSlim _stoppingLock = new(1, 1);
     private bool _stopped;
 
     public KafkaBus(
@@ -73,13 +74,20 @@ internal class KafkaBus : IKafkaBus
         }
     }
 
-    public Task StopAsync()
+    public async Task StopAsync()
     {
-        lock (_consumerManagers)
+        if (_stopped)
         {
+            return;
+        }
+
+        try
+        {
+            await _stoppingLock.WaitAsync().ConfigureAwait(false);
+
             if (_stopped)
             {
-                return Task.CompletedTask;
+                return;
             }
 
             _stopped = true;
@@ -89,7 +97,11 @@ internal class KafkaBus : IKafkaBus
                 cluster.OnStoppingHandler(_dependencyResolver);
             }
 
-            return Task.WhenAll(_consumerManagers.Select(x => x.StopAsync()));
+            await Task.WhenAll(_consumerManagers.Select(x => x.StopAsync())).ConfigureAwait(false);
+        }
+        finally
+        {
+            _stoppingLock.Release();
         }
     }
 
